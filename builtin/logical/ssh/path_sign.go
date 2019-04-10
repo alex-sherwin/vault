@@ -216,16 +216,16 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 	var certValidAfter, certValidBefore uint64
 
 	// branch the logic for calculating the certificate ValidAfter & ValidBefore values
-	if ttlWasSpecified {
-		// calculate certificate ValidAfter/ValidBefore using TTL
-		now := time.Now()
-		certValidAfter = uint64(now.Add(-30 * time.Second).In(time.UTC).Unix())
-		certValidBefore = uint64(now.Add(ttl).In(time.UTC).Unix())
-	} else if validAfterWasSpecified && validBeforeWasSpecified {
+	if validAfterWasSpecified && validBeforeWasSpecified {
 		// the ValidAfter/ValidBefore were specified as epoch's directly in the specified data
 		// it's already known that these are both true if at least one is true from prior checks
 		certValidAfter = validAfter
 		certValidBefore = validBefore
+	} else {
+		// calculate certificate ValidAfter/ValidBefore using TTL (specified or derived)
+		now := time.Now()
+		certValidAfter = uint64(now.Add(-30 * time.Second).In(time.UTC).Unix())
+		certValidBefore = uint64(now.Add(ttl).In(time.UTC).Unix())
 	}
 
 	cBundle := creationBundle{
