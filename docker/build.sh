@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -e
 
+version=$1
+echo "using version=${version}"
+
 # Get the root project directory
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ] ; do SOURCE="$(readlink "$SOURCE")"; done
@@ -16,4 +19,4 @@ DOCKER_DIR=${PROJECT_DIR}/docker
 rm -rf ${DOCKER_DIR}/pkg || echo "no pkg dir to remove"
 cp -R ${PKG_DIR} ${DOCKER_DIR}/pkg
 
-docker build -t nexus3.acadiasoft.net:4443/vault:1.1.0_01 .
+docker build --build-arg VAULT_VERSION=${version} -t nexus3.acadiasoft.net:4443/vault:${version} .

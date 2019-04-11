@@ -1,7 +1,6 @@
 FROM alpine:3.8
 
-# This is the release of Vault to pull in.
-ENV VAULT_VERSION=1.1.0_01
+ARG VAULT_VERSION
 ENV ARCH=amd64
 
 # Create a vault user and group first so the IDs get set the same way,
