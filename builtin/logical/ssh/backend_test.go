@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/hashicorp/vault/api"
-	"github.com/hashicorp/vault/sdk/logical"
 	"net"
 	"reflect"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/vault/api"
+	"github.com/hashicorp/vault/sdk/logical"
 
 	"golang.org/x/crypto/ssh"
 
@@ -122,6 +123,13 @@ SjOQL/GkH1nkRcDS9++aAAAAAmNhAQID
 
 	dockerImageTagSupportsRSA1   = "8.1_p1-r0-ls20"
 	dockerImageTagSupportsNoRSA1 = "8.3_p1-r0-ls21"
+)
+
+type CertValidityValidationMethod int
+
+const (
+	ValidateTTL            CertValidityValidationMethod = 0
+	ValidateAfterAndBefore CertValidityValidationMethod = 1
 )
 
 func prepareTestContainer(t *testing.T, tag, caPublicKeyPEM string) (func(), string) {
@@ -990,6 +998,52 @@ cKumubUxOfFdy1ZvAAAAEm5jY0BtYnAudWJudC5sb2NhbA==
 	logicaltest.Test(t, testCase)
 }
 
+func TestBackend_ValidAfterBeforeOk(t *testing.T) {
+
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"valid_after":      0,
+					"valid_before":     7200,
+				}),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
 func TestBackend_AbleToRetrievePublicKey(t *testing.T) {
 
 	config := logical.TestBackendConfig()
@@ -1107,7 +1161,7 @@ func TestBackend_ValidPrincipalsValidatedForHostCertificates(t *testing.T) {
 			}, map[string]string{
 				"extension": "extended",
 			},
-				2*time.Hour, map[string]interface{}{
+				2*time.Hour, ValidateTTL, map[string]interface{}{
 					"public_key":       publicKey2,
 					"ttl":              "2h",
 					"cert_type":        "host",
@@ -1151,7 +1205,7 @@ func TestBackend_OptionsOverrideDefaults(t *testing.T) {
 				"secondary": "value",
 			}, map[string]string{
 				"additional": "value",
-			}, 2*time.Hour, map[string]interface{}{
+			}, 2*time.Hour, ValidateTTL, map[string]interface{}{
 				"public_key": publicKey2,
 				"ttl":        "2h",
 				"critical_options": map[string]interface{}{
@@ -1268,7 +1322,7 @@ func TestBackend_CustomKeyIDFormat(t *testing.T) {
 				"secondary": "value",
 			}, map[string]string{
 				"additional": "value",
-			}, 2*time.Hour, map[string]interface{}{
+			}, 2*time.Hour, ValidateTTL, map[string]interface{}{
 				"public_key": publicKey2,
 				"ttl":        "2h",
 				"critical_options": map[string]interface{}{
@@ -1346,6 +1400,7 @@ func signCertificateStep(
 	role, keyID string, certType int, validPrincipals []string,
 	criticalOptionPermissions, extensionPermissions map[string]string,
 	ttl time.Duration,
+	validationMethod CertValidityValidationMethod,
 	requestParameters map[string]interface{}) logicaltest.TestStep {
 	return logicaltest.TestStep{
 		Operation: logical.UpdateOperation,
@@ -1371,13 +1426,13 @@ func signCertificateStep(
 				return err
 			}
 
-			return validateSSHCertificate(parsedKey.(*ssh.Certificate), keyID, certType, validPrincipals, criticalOptionPermissions, extensionPermissions, ttl)
+			return validateSSHCertificate(parsedKey.(*ssh.Certificate), keyID, certType, validPrincipals, criticalOptionPermissions, extensionPermissions, ttl, validationMethod)
 		},
 	}
 }
 
 func validateSSHCertificate(cert *ssh.Certificate, keyID string, certType int, validPrincipals []string, criticalOptionPermissions, extensionPermissions map[string]string,
-	ttl time.Duration) error {
+	ttl time.Duration, validationMethod CertValidityValidationMethod) error {
 
 	if cert.KeyId != keyID {
 		return fmt.Errorf("incorrect KeyId: %v, wanted %v", cert.KeyId, keyID)
@@ -1387,17 +1442,28 @@ func validateSSHCertificate(cert *ssh.Certificate, keyID string, certType int, v
 		return fmt.Errorf("incorrect CertType: %v", cert.CertType)
 	}
 
-	if time.Unix(int64(cert.ValidAfter), 0).After(time.Now()) {
-		return fmt.Errorf("incorrect ValidAfter: %v", cert.ValidAfter)
-	}
+	if validationMethod == ValidateTTL {
+		// validation logic for when ValidAfter/ValidBefore were calculated based on a TTL
+		if time.Unix(int64(cert.ValidAfter), 0).After(time.Now()) {
+			return fmt.Errorf("incorrect ValidAfter: %v", cert.ValidAfter)
+		}
 
-	if time.Unix(int64(cert.ValidBefore), 0).Before(time.Now()) {
-		return fmt.Errorf("incorrect ValidBefore: %v", cert.ValidBefore)
-	}
+		if time.Unix(int64(cert.ValidBefore), 0).Before(time.Now()) {
+			return fmt.Errorf("incorrect ValidBefore: %v", cert.ValidBefore)
+		}
 
-	actualTTL := time.Unix(int64(cert.ValidBefore), 0).Add(-30 * time.Second).Sub(time.Unix(int64(cert.ValidAfter), 0))
-	if actualTTL != ttl {
-		return fmt.Errorf("incorrect ttl: expected: %v, actualL %v", ttl, actualTTL)
+		actualTTL := time.Unix(int64(cert.ValidBefore), 0).Add(-30 * time.Second).Sub(time.Unix(int64(cert.ValidAfter), 0))
+		if actualTTL != ttl {
+			return fmt.Errorf("incorrect ttl: expected: %v, actual %v", ttl, actualTTL)
+		}
+	} else if validationMethod == ValidateAfterAndBefore {
+
+		// validation logic for when ValidAfter/ValidBefore were specified as UNIX epochs
+
+		// check that the difference between ValidAfter/ValidBefore matches the expected TTL
+		if uint64(ttl.Seconds()) != (cert.ValidBefore - cert.ValidAfter) {
+			return fmt.Errorf("incorrect ValidAfter: %v, ValidBefore: %v, they should have been %v seconds apart", cert.ValidAfter, cert.ValidBefore, ttl.Seconds())
+		}
 	}
 
 	if !reflect.DeepEqual(cert.ValidPrincipals, validPrincipals) {
