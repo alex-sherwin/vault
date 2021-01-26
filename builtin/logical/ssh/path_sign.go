@@ -30,7 +30,8 @@ type creationBundle struct {
 	ValidPrincipals []string
 	PublicKey       ssh.PublicKey
 	CertificateType uint32
-	TTL             time.Duration
+	ValidBefore     uint64
+	ValidAfter      uint64
 	Signer          ssh.Signer
 	Role            *sshRole
 	CriticalOptions map[string]string
@@ -49,6 +50,14 @@ func pathSign(b *backend) *framework.Path {
 			"role": &framework.FieldSchema{
 				Type:        framework.TypeString,
 				Description: `The desired role with configuration for this request.`,
+			},
+			"valid_after": &framework.FieldSchema{
+				Type:        framework.TypeInt,
+				Description: `The "valid after" UNIX epoch in seconds, must be used with valid_before.  Cannot be used with ttl.`,
+			},
+			"valid_before": &framework.FieldSchema{
+				Type:        framework.TypeInt,
+				Description: `The "valid before" UNIX epoch in seconds, must be used with valid_after.  Cannot be used with ttl.`,
 			},
 			"ttl": &framework.FieldSchema{
 				Type: framework.TypeDurationSecond,
@@ -146,9 +155,41 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 		}
 	}
 
-	ttl, err := b.calculateTTL(data, role)
+	ttl, maxTTL, ttlWasSpecified, err := b.calculateTTL(data, role)
 	if err != nil {
 		return logical.ErrorResponse(err.Error()), nil
+	}
+
+	validAfter, validAfterWasSpecified, err := b.calculateValidAfter(data)
+	if err != nil {
+		return logical.ErrorResponse(err.Error()), nil
+	}
+
+	validBefore, validBeforeWasSpecified, err := b.calculateValidBefore(data)
+	if err != nil {
+		return logical.ErrorResponse(err.Error()), nil
+	}
+
+	// ttl cannot be mixed with valid_after and valid_before
+	if ttlWasSpecified && (validAfterWasSpecified || validBeforeWasSpecified) {
+		return logical.ErrorResponse("ttl cannot be mixed with valid_after and valid_before"), nil
+	}
+
+	// valid_after and valid_before must be specified in tandem
+	if (validAfterWasSpecified && !validBeforeWasSpecified) || (!validAfterWasSpecified && validBeforeWasSpecified) {
+		return logical.ErrorResponse("valid_after and valid_before must be used together"), nil
+	}
+
+	// if using ValidAfter/ValidBefore, apply some sanity checks
+	if validAfterWasSpecified && validBeforeWasSpecified {
+		// ensure ValidBefore does not come before ValidAfter
+		if validBefore < validAfter {
+			return logical.ErrorResponse("valid_before cannot be before valid_after"), nil
+		}
+		// ensure that the total time period specified does not exceed the max allowed ttl
+		if (validBefore - validAfter) > uint64(maxTTL.Seconds()) {
+			return logical.ErrorResponse("the time period between valid_after and valid_before exceed the max allowed TTL"), nil
+		}
 	}
 
 	criticalOptions, err := b.calculateCriticalOptions(data, role)
@@ -174,12 +215,28 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 		return nil, errwrap.Wrapf("failed to parse stored CA private key: {{err}}", err)
 	}
 
+	var certValidAfter, certValidBefore uint64
+
+	// branch the logic for calculating the certificate ValidAfter & ValidBefore values
+	if validAfterWasSpecified && validBeforeWasSpecified {
+		// the ValidAfter/ValidBefore were specified as epoch's directly in the specified data
+		// it's already known that these are both true if at least one is true from prior checks
+		certValidAfter = validAfter
+		certValidBefore = validBefore
+	} else {
+		// calculate certificate ValidAfter/ValidBefore using TTL (specified or derived)
+		now := time.Now()
+		certValidAfter = uint64(now.Add(-30 * time.Second).In(time.UTC).Unix())
+		certValidBefore = uint64(now.Add(ttl).In(time.UTC).Unix())
+	}
+
 	cBundle := creationBundle{
 		KeyID:           keyID,
 		PublicKey:       userPublicKey,
 		Signer:          signer,
 		ValidPrincipals: parsedPrincipals,
-		TTL:             ttl,
+		ValidAfter:      certValidAfter,
+		ValidBefore:     certValidBefore,
 		CertificateType: certificateType,
 		Role:            role,
 		CriticalOptions: criticalOptions,
@@ -204,6 +261,54 @@ func (b *backend) pathSignCertificate(ctx context.Context, req *logical.Request,
 	}
 
 	return response, nil
+}
+
+// return values:
+//  1. the "valid_after" from specified data, 0 if not specified
+//  2. true if "valid_after" was specified in the data, false otherwise
+//  3. any error
+func (b *backend) calculateValidAfter(data *framework.FieldData) (uint64, bool, error) {
+
+	validAfterRaw, valueWasSet, err := data.GetOkErr("valid_after")
+
+	// a value was specified, but an error occurred while parsing it
+	if valueWasSet && err != nil {
+		return 0, true, errwrap.Wrapf("failed to parse valid_after", err)
+	}
+
+	// the value was set, and no errors, return it
+	if valueWasSet {
+		var validAfter = uint64(validAfterRaw.(int))
+		return validAfter, true, nil
+	}
+
+	// no value was set
+	return 0, false, nil
+
+}
+
+// return values:
+//  1. the "valid_before" from specified data, 0 if not specified
+//  2. true if "valid_before" was specified in the data, false otherwise
+//  3. any error
+func (b *backend) calculateValidBefore(data *framework.FieldData) (uint64, bool, error) {
+
+	validBeforeRaw, valueWasSet, err := data.GetOkErr("valid_before")
+
+	// a value was specified, but an error occurred while parsing it
+	if valueWasSet && err != nil {
+		return 0, true, errwrap.Wrapf("failed to parse valid_before", err)
+	}
+
+	// the value was set, and no errors, return it
+	if valueWasSet {
+		var validBefore = uint64(validBeforeRaw.(int))
+		return validBefore, true, nil
+	}
+
+	// no value was set
+	return 0, false, nil
+
 }
 
 func (b *backend) calculateValidPrincipals(data *framework.FieldData, req *logical.Request, role *sshRole, defaultPrincipal, principalsAllowedByRole string, validatePrincipal func([]string, string) bool) ([]string, error) {
@@ -383,9 +488,15 @@ func (b *backend) calculateExtensions(data *framework.FieldData, role *sshRole) 
 	return extensions, nil
 }
 
-func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.Duration, error) {
+// return values:
+//  1. the calculated TTL duration (may be from specified data or derived from role/defaults)
+//  2. true if the returned TTL was specified in the data, false otherwise
+//  3. calculated maxTTL
+//  4. any error
+func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.Duration, time.Duration, bool, error) {
 	var ttl, maxTTL time.Duration
 	var err error
+	var ttlWasSpecified = false
 
 	ttlRaw, specifiedTTL := data.GetOk("ttl")
 	if specifiedTTL {
@@ -393,7 +504,7 @@ func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.D
 	} else {
 		ttl, err = parseutil.ParseDurationSecond(role.TTL)
 		if err != nil {
-			return 0, err
+			return 0, maxTTL, false, err
 		}
 	}
 	if ttl == 0 {
@@ -402,7 +513,7 @@ func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.D
 
 	maxTTL, err = parseutil.ParseDurationSecond(role.MaxTTL)
 	if err != nil {
-		return 0, err
+		return 0, maxTTL, ttlWasSpecified, err
 	}
 	if maxTTL == 0 {
 		maxTTL = b.System().MaxLeaseTTL()
@@ -414,11 +525,11 @@ func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.D
 		if !specifiedTTL {
 			ttl = maxTTL
 		} else {
-			return 0, fmt.Errorf("ttl is larger than maximum allowed %d", maxTTL/time.Second)
+			return 0, maxTTL, ttlWasSpecified, fmt.Errorf("ttl is larger than maximum allowed %d", maxTTL/time.Second)
 		}
 	}
 
-	return ttl, nil
+	return ttl, maxTTL, ttlWasSpecified, nil
 }
 
 func (b *backend) validateSignedKeyRequirements(publickey ssh.PublicKey, role *sshRole) error {
@@ -496,8 +607,6 @@ func (b *creationBundle) sign() (retCert *ssh.Certificate, retErr error) {
 		return nil, err
 	}
 
-	now := time.Now()
-
 	sshAlgorithmSigner, ok := b.Signer.(ssh.AlgorithmSigner)
 	if !ok {
 		return nil, fmt.Errorf("failed to generate signed SSH key: signer is not an AlgorithmSigner")
@@ -513,8 +622,8 @@ func (b *creationBundle) sign() (retCert *ssh.Certificate, retErr error) {
 		Key:             b.PublicKey,
 		KeyId:           b.KeyID,
 		ValidPrincipals: b.ValidPrincipals,
-		ValidAfter:      uint64(now.Add(-30 * time.Second).In(time.UTC).Unix()),
-		ValidBefore:     uint64(now.Add(b.TTL).In(time.UTC).Unix()),
+		ValidAfter:      b.ValidAfter,
+		ValidBefore:     b.ValidBefore,
 		CertType:        b.CertificateType,
 		Permissions: ssh.Permissions{
 			CriticalOptions: b.CriticalOptions,
