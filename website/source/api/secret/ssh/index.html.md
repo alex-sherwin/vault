@@ -767,6 +767,18 @@ to the restrictions contained in the role named in the endpoint.
   be used. Note that the role values default to system values if not explicitly
   set.
 
+- `valid_after` `(int: <no default>)` – Specifies the ValidAfter time to use on the
+  signed SSH certificate as a UNIX epoch in seconds.  Must be used with `valid_before`.
+  The total time period specified between `valid_after` and `valid_before` must be
+  less than or equal to the role's `max_ttl` value.  Cannot be used at the same time
+  as `ttl`.
+
+- `valid_before` `(int: <no default>)` – Specifies the ValidBefore time to use on the
+  signed SSH certificate as a UNIX epoch in seconds.  Must be used with `valid_after`.
+  The total time period specified between `valid_after` and `valid_before` must be
+  less than or equal to the role's `max_ttl` value.  Cannot be used at the same time
+  as `ttl`.
+
 - `valid_principals` `(string: "")` – Specifies valid principals, either
   usernames or hostnames, that the certificate should be signed for.
 
