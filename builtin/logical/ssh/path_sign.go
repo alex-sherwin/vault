@@ -500,6 +500,7 @@ func (b *backend) calculateTTL(data *framework.FieldData, role *sshRole) (time.D
 
 	ttlRaw, specifiedTTL := data.GetOk("ttl")
 	if specifiedTTL {
+		ttlWasSpecified = true
 		ttl = time.Duration(ttlRaw.(int)) * time.Second
 	} else {
 		ttl, err = parseutil.ParseDurationSecond(role.TTL)

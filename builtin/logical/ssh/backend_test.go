@@ -1044,6 +1044,340 @@ func TestBackend_ValidAfterBeforeOk(t *testing.T) {
 	logicaltest.Test(t, testCase)
 }
 
+func TestBackend_ValidAfterMixedWithTTLErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"ttl":              "2h",
+					"valid_after":      1,
+				},
+				"ttl cannot be mixed with valid_after and valid_before",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidBeforeMixedWithTTLErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"ttl":              "2h",
+					"valid_before":     0,
+				},
+				"ttl cannot be mixed with valid_after and valid_before",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidAfterAndValidBeforeMixedWithTTLErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"ttl":              "2h",
+					"valid_after":      0,
+					"valid_before":     7200,
+				},
+				"ttl cannot be mixed with valid_after and valid_before",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidAfterMissingErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"valid_before":     7200,
+				},
+				"valid_after and valid_before must be used together",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidBeforeMissingErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"valid_after":      0,
+				},
+				"valid_after and valid_before must be used together",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidBeforeIsBeforeValidAfterErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "2h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				2*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"valid_after":      7200,
+					"valid_before":     0,
+				},
+				"valid_before cannot be before valid_after",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
+func TestBackend_ValidAfterAndValidBeforeExceedMaxTTLErr(t *testing.T) {
+	config := logical.TestBackendConfig()
+
+	b, err := Factory(context.Background(), config)
+	if err != nil {
+		t.Fatalf("Cannot create backend: %s", err)
+	}
+
+	testCase := logicaltest.TestCase{
+		LogicalBackend: b,
+		AcceptanceTest: true,
+		Steps: []logicaltest.TestStep{
+			configCaStep(testCAPublicKey, testCAPrivateKey),
+
+			createRoleStep("testing", map[string]interface{}{
+				"key_type":                "ca",
+				"allow_host_certificates": true,
+				"allowed_domains":         "example.com,example.org",
+				"allow_subdomains":        true,
+				"default_critical_options": map[string]interface{}{
+					"option": "value",
+				},
+				"default_extensions": map[string]interface{}{
+					"extension": "extended",
+				},
+				"max_ttl": "1h",
+			}),
+
+			signCertificateWithErrorStep("testing", "vault-root-22608f5ef173aabf700797cb95c5641e792698ec6380e8e1eb55523e39aa5e51", ssh.HostCert, []string{"dummy.example.org", "second.example.com"}, map[string]string{
+				"option": "value",
+			}, map[string]string{
+				"extension": "extended",
+			},
+				1*time.Hour, ValidateAfterAndBefore, map[string]interface{}{
+					"public_key":       publicKey2,
+					"cert_type":        "host",
+					"valid_principals": "dummy.example.org,second.example.com",
+					"valid_after":      0,
+					"valid_before":     7200,
+				},
+				"the time period between valid_after and valid_before exceed the max allowed TTL",
+			),
+		},
+	}
+
+	logicaltest.Test(t, testCase)
+}
+
 func TestBackend_AbleToRetrievePublicKey(t *testing.T) {
 
 	config := logical.TestBackendConfig()
@@ -1427,6 +1761,27 @@ func signCertificateStep(
 			}
 
 			return validateSSHCertificate(parsedKey.(*ssh.Certificate), keyID, certType, validPrincipals, criticalOptionPermissions, extensionPermissions, ttl, validationMethod)
+		},
+	}
+}
+
+func signCertificateWithErrorStep(
+	role, keyID string, certType int, validPrincipals []string,
+	criticalOptionPermissions, extensionPermissions map[string]string,
+	ttl time.Duration,
+	validationMethod CertValidityValidationMethod,
+	requestParameters map[string]interface{},
+	expectedErrorMessage string) logicaltest.TestStep {
+	return logicaltest.TestStep{
+		Operation: logical.UpdateOperation,
+		Path:      "sign/" + role,
+		Data:      requestParameters,
+		ErrorOk:   true,
+		Check: func(resp *logical.Response) error {
+			if resp.Data["error"] != expectedErrorMessage {
+				return errors.New(resp.Data["error"].(string))
+			}
+			return nil
 		},
 	}
 }
